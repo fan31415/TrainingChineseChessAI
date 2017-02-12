@@ -18,9 +18,15 @@
     <ClCompile Include="源.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="bpnet.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="xiangqi.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="bp.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

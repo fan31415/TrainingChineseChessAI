@@ -16,6 +16,11 @@
 #include"xiangqi.h"
 #include<string.h>
 #include<windows.h>
+#include"bp.h"
+
+//训练
+Train train;
+
 
 // 棋盘范围
 const int RANK_TOP = 3;
@@ -549,6 +554,8 @@ struct MoveStruct {
 	}
 }; // mvs
 
+int vvmax = -1;
+int vvmin = 999;
    // 局面结构
 struct PositionStruct {
 	int sdPlayer;                   // 轮到谁走，0=红方，1=黑方
@@ -597,7 +604,15 @@ struct PositionStruct {
 		}
 	}
 	int Evaluate(void) const {      // 局面评价函数
-		return (sdPlayer == 0 ? vlWhite - vlBlack : vlBlack - vlWhite) + ADVANCED_VALUE;
+		int val = (sdPlayer == 0 ? vlWhite - vlBlack : vlBlack - vlWhite) + ADVANCED_VALUE;
+		if (val > vvmax) {
+			vvmax = val;
+		}
+		if (val < vvmin) {
+			vvmin = val;
+		}
+		return val;
+		//return (sdPlayer == 0 ? vlWhite - vlBlack : vlBlack - vlWhite) + ADVANCED_VALUE;
 	}
 	BOOL InCheck(void) const {      // 是否被将军
 		return mvsList[nMoveNum - 1].ucbCheck;
@@ -689,8 +704,12 @@ void PositionStruct::UndoMovePiece(int mv, int pcCaptured) {
 	}
 }
 
+
+
+
 // 走一步棋
 BOOL PositionStruct::MakeMove(int mv) {
+
 	int pcCaptured;
 	DWORD dwKey;
 
@@ -1616,19 +1635,28 @@ static void SearchMain(void) {
 
 // 打印输出
 inline void PlayResWav(char * str) {
-	printf("%s\n", str);
+	//printf("%s\n", str);
 }
 
-
-
-
+void showInfo();
+void displayMv(int mv);
+int getEval(int isRed);
 // 电脑回应一步棋
 static void ResponseMove(void) {
 	int vlRep;
 	// 电脑走一步棋
 	SearchMain();
-	pos.MakeMove(Search.mvResult);
 	
+	//printf("max %d min %d\n", vvmax, vvmin);
+	//printf("black eval%d, true eval%d\n", getEval(0), pos.Evaluate());
+	/*为了显示步骤*/
+	//displayMv(Search.mvResult);
+
+
+	pos.MakeMove(Search.mvResult);
+
+	//showInfo();
+	train.addTrainData();
 	// 把电脑走的棋标记出来
 	Xqwl.mvLast = Search.mvResult;
 	
@@ -1637,20 +1665,20 @@ static void ResponseMove(void) {
 	if (pos.IsMate()) {
 		// 如果分出胜负，那么播放胜负的声音，并且弹出不带声音的提示框
 		PlayResWav(IDR_LOSS);
-		printf("请再接再厉！");
+		//printf("请再接再厉！");
 		Xqwl.bGameOver = TRUE;
 	}
 	else if (vlRep > 0) {
 		vlRep = pos.RepValue(vlRep);
 		// 注意："vlRep"是对玩家来说的分值
 		PlayResWav(vlRep < -WIN_VALUE ? IDR_LOSS : vlRep > WIN_VALUE ? IDR_WIN : IDR_DRAW);
-		printf(vlRep < -WIN_VALUE ? "长打作负，请不要气馁！" :
-			vlRep > WIN_VALUE ? "电脑长打作负，祝贺你取得胜利！" : "双方不变作和，辛苦了！");
+		//printf(vlRep < -WIN_VALUE ? "长打作负，请不要气馁！" :
+			//vlRep > WIN_VALUE ? "电脑长打作负，祝贺你取得胜利！" : "双方不变作和，辛苦了！");
 		Xqwl.bGameOver = TRUE;
 	}
 	else if (pos.nMoveNum > 100) {
 		PlayResWav(IDR_DRAW);
-		printf("超过自然限着作和，辛苦了！");
+		//printf("超过自然限着作和，辛苦了！");
 		Xqwl.bGameOver = TRUE;
 	}
 	else {
@@ -1670,14 +1698,121 @@ static void Startup(void) {
 	Xqwl.sqSelected = Xqwl.mvLast = 0;
 	Xqwl.bGameOver = FALSE;
 }
+/***
+为了训练而写
+start
+*/
+void displayMv(int mv) {
+	int i, j, nGenMoves, nDelta, sqSrc, sqDst;
+	int pcSelfSide, pcOppSide, pcSrc, pcDst;
+	// 生成所有走法，需要经过以下几个步骤：
+	pcSelfSide = SIDE_TAG(pos.sdPlayer);
+	pcOppSide = OPP_SIDE_TAG(pos.sdPlayer);
+	int side = 0;
 
+	// 1. 找到一个本方棋子，再做以下判断：
+	sqSrc = SRC(mv);
+	sqDst = DST(mv);
+	printf("from %d %d ", RANK_Y(sqSrc), FILE_X(sqSrc));
+	printf("to %d %d ", RANK_Y(sqDst), FILE_X(sqDst));
+	pcSrc = pos.ucpcSquares[sqSrc];
+	if ((pcSrc & pcSelfSide) == 0) {
+		//非本方棋子
+		side = pcOppSide;
+	}
+	else {
+		side = pcSelfSide;
+	}
 
+	// 2. 根据棋子确定走法
+	switch (pcSrc - side) {
+	case 0:
+		printf(" king ");
+		break;
+	case 1:
+		printf(" shi ");
+		break;
+	case 2:
+		printf(" xiang ");
+		break;
+	case 3:
+		printf(" ma ");
+		break;
+	case 4:
+		printf(" jv ");
+		break;
+	case 5:
+		printf(" pao ");
+		break;
+	case 6:
+		printf(" bing ");
+		break;
+	default:
+		printf("%d %d \n", pcSrc, side);
+	}
+
+}
+
+int stepCount;
+
+static void RandResponseMove(void) {
+	int vlRep;
+	// 电脑走一步棋
+	//走棋
+	int mvs[MAX_GEN_MOVES];
+	int nGenMoveNum = pos.GenerateMoves(mvs);
+	if (nGenMoveNum == 0) {
+		return;
+	}
+	srand((unsigned)time(0));
+	int choice = rand() % nGenMoveNum;
+	int mv = mvs[choice];
+	pos.MakeMove(mv);
+	
+	//showInfo();
+	train.addTrainData();
+
+	//printf("%d\n", stepCount++);
+	stepCount++;
+
+	Xqwl.mvLast = mv;
+	
+	// 检查重复局面
+	vlRep = pos.RepStatus(3);
+	if (pos.IsMate()) {
+		// 如果分出胜负，那么播放胜负的声音，并且弹出不带声音的提示框
+		PlayResWav(IDR_LOSS);
+		//printf("请再接再厉！");
+		Xqwl.bGameOver = TRUE;
+	}
+	else if (vlRep > 0) {
+		vlRep = pos.RepValue(vlRep);
+		// 注意："vlRep"是对玩家来说的分值
+		PlayResWav(vlRep < -WIN_VALUE ? IDR_LOSS : vlRep > WIN_VALUE ? IDR_WIN : IDR_DRAW);
+		//printf(vlRep < -WIN_VALUE ? "长打作负，请不要气馁！" :
+			//vlRep > WIN_VALUE ? "电脑长打作负，祝贺你取得胜利！" : "双方不变作和，辛苦了！");
+		Xqwl.bGameOver = TRUE;
+	}
+	else if (pos.nMoveNum > 100) {
+		PlayResWav(IDR_DRAW);
+		//printf("超过自然限着作和，辛苦了！");
+		Xqwl.bGameOver = TRUE;
+	}
+	else {
+		// 如果没有分出胜负，那么播放将军、吃子或一般走子的声音
+		PlayResWav(pos.InCheck() ? IDR_CHECK2 : pos.Captured() ? IDR_CAPTURE2 : IDR_MOVE2);
+		if (pos.Captured()) {
+			pos.SetIrrev();
+		}
+	}
+}
+int isrand = true;
+int mvCount;
 
 void moveRand() {
 	int pc, mv, vlRep;
 	int i, nGenMoveNum, pcCaptured;
 	int mvs[MAX_GEN_MOVES];
-
 
 	//走棋
 	nGenMoveNum = pos.GenerateMoves(mvs);
@@ -1685,10 +1820,39 @@ void moveRand() {
 	if (nGenMoveNum == 0) {
 		return;
 	}
-	mv = mvs[0];
+	if (isrand) {
+		srand((unsigned)time(0));
+		int choice = rand() % nGenMoveNum;
+		mv = mvs[choice];
+	}
+	else {
+		int choice = mvCount;
+		if (choice > nGenMoveNum) {
+			Xqwl.bGameOver = true;
+			//printf("输啦!");
+			return;
+		}
+		mv = mvs[choice];
+		mvCount++;
+	}
+
+	/*为了显示步骤*/
+	
+
 	if (pos.LegalMove(mv)) {
 		//每一次makeMove时就交换了对手
 		if (pos.MakeMove(mv)) {
+
+			if (!train.isEval) {
+				train.addTrainData();
+			}
+			else {
+				train.predictEval();
+			}
+			
+			//showInfo();
+			//displayMv(mv);
+			isrand = true;	
 			Xqwl.mvLast = mv;
 			Xqwl.sqSelected = 0;
 			// 检查重复局面
@@ -1696,20 +1860,20 @@ void moveRand() {
 			if (pos.IsMate()) {
 				// 如果分出胜负，那么播放胜负的声音，并且弹出不带声音的提示框
 				PlayResWav(IDR_WIN);
-				printf("祝贺你取得胜利！");
+				//printf("祝贺你取得胜利！");
 				Xqwl.bGameOver = TRUE;
 			}
 			else if (vlRep > 0) {
 				vlRep = pos.RepValue(vlRep);
 				// 注意："vlRep"是对电脑来说的分值
 				PlayResWav(vlRep > WIN_VALUE ? IDR_LOSS : vlRep < -WIN_VALUE ? IDR_WIN : IDR_DRAW);
-				printf(vlRep > WIN_VALUE ? "长打作负，请不要气馁！" :
-					vlRep < -WIN_VALUE ? "电脑长打作负，祝贺你取得胜利！" : "双方不变作和，辛苦了！");
+				//printf(vlRep > WIN_VALUE ? "长打作负，请不要气馁！" :
+					//vlRep < -WIN_VALUE ? "电脑长打作负，祝贺你取得胜利！" : "双方不变作和，辛苦了！");
 				Xqwl.bGameOver = TRUE;
 			}
 			else if (pos.nMoveNum > 100) {
 				PlayResWav(IDR_DRAW);
-				printf("超过自然限着作和，辛苦了！");
+				//printf("超过自然限着作和，辛苦了！");
 				Xqwl.bGameOver = TRUE;
 			}
 			else {
@@ -1718,29 +1882,217 @@ void moveRand() {
 				if (pos.Captured()) {
 					pos.SetIrrev();
 				}
-				ResponseMove(); // 轮到电脑走棋
+				//ResponseMove(); // 轮到电脑走棋
+				RandResponseMove();//双方随机训练
+				stepCount++;
+				//cout <<  (stepCount++ )<< endl;
+				
 			}
 		}
 		else {
-			printf("输啦！\n");
-			Xqwl.bGameOver = TRUE;
-			//PlayResWav(IDR_ILLEGAL); // 播放被将军的声音
+			//printf("输啦！\n");
+			//Xqwl.bGameOver = TRUE;
+			if (isrand) {
+				mvCount = 0;
+			}
+			isrand = false;
+			PlayResWav(IDR_ILLEGAL); // 播放被将军的声音
 		}
 	}
 	
-	printf("交换选手\n");
+	//printf("交换选手\n");
 }
+
+//对结果进行归一化
+const int maxval = 1250;
+const int minval = -1250;
+double rangeVal(int val) {
+	//2500是max - min
+	double fval = (val - minval) / 2500.0;
+	return fval;
+}
+const int minIn = -211;
+const int maxIn = 211;
+double rangeIn(int in) {
+	double fin = (in - minIn) / 422.0;
+	return fin;
+}
+//对随机走的一方只有这样判断
+int getEval(int isRed) {
+	int val = 0; 
+	int vlWhite = 0;
+	int vlBlack = 0;
+	int pc;
+	for (int sq = 0; sq < 256; sq++) {
+		pc = pos.ucpcSquares[sq];
+		if (pc == 0) {
+			continue;
+		}
+		if (pc < 16) {
+			vlWhite += cucvlPiecePos[pc - 8][sq];
+		}
+		else {
+			vlBlack += cucvlPiecePos[pc - 16][SQUARE_FLIP(sq)];
+		}
+	}
+	val = (isRed ? vlWhite - vlBlack : vlBlack - vlWhite) + ADVANCED_VALUE;
+	return val;
+}
+
+//监督学习
+
+
+void Train::initTrainBp() {
+	sampleCount = 0;
+	memset(inputData, 0, sizeof(inputData));
+	sampleGroup.clear();
+
+}
+void Train::addTrainData() {
+	int side = 0;//红黑标记
+	inputData[90] = side;
+	int pc;
+	for (int sq = 0; sq < 256; sq++) {
+		pc = pos.ucpcSquares[sq];
+		int x = RANK_Y(sq) - 3;
+		int y = FILE_X(sq) - 3;
+		if (x < 0 || x >= 10 || y < 0 || y >= 9) {
+			continue;
+		}
+		int index = x * 9 + y;
+		//printf("index %d\n", index);
+		if (pc < 16) {//红
+			inputData[index] = rangeIn(power[pc - 8]);
+		}
+		else {//黑
+			inputData[index] = rangeIn(-power[pc - 16]);
+		}
+	}
+	//输入数据准备结束
+	
+	vector<double> samplein;
+	vector<double> sampleout;
+	for (int i = 0; i < 91; i++) {
+		samplein.push_back(inputData[i]);
+	}
+	sampleout.push_back(rangeVal(getEval(1)));
+	//printf("sample out %lf\n", sampleout.front());
+	sample sampleInOut;
+	sampleInOut.in = samplein;
+	sampleInOut.out = sampleout;
+	sampleGroup.push_back(sampleInOut);
+	//输入完毕一组红方数据
+	samplein.pop_back();
+	samplein.push_back(1);
+	sampleout.clear();
+	sampleout.push_back(rangeVal(getEval(0)));
+	//printf("sample out %lf\n", sampleout.front());
+	sampleInOut.in = samplein;
+	sampleInOut.out = sampleout;
+	sampleGroup.push_back(sampleInOut);
+	//输入完毕一组黑方数据
+
+}
+void Train::trainingBp(bool isContinue) {
+	
+	evalNet.training(sampleGroup, 0.00001, isContinue);
+}
+void Train::predictEval() {
+	int side = pos.sdPlayer;
+	inputData[90] = side;
+	int pc;
+	for (int sq = 0; sq < 256; sq++) {
+		pc = pos.ucpcSquares[sq];
+		int x = RANK_Y(sq) - 3;
+		int y = FILE_X(sq) - 3;
+		if (x < 0 || x >= 10 || y < 0 || y >= 9) {
+			continue;
+		}
+		int index = x * 9 + y;
+		//printf("index %d\n", index);
+		if (pc < 16) {//红
+			inputData[index] = rangeIn(power[pc - 8]);
+		}
+		else {//黑
+			inputData[index] = rangeIn(-power[pc - 16]);
+		}
+	}
+	vector<double> testin;
+	vector<double> testout;
+	for (int i = 0; i < 91; i++) {
+		testin.push_back(inputData[i]);
+	}
+	sample testInOut;
+	testInOut.in = testin;
+	testGroup.push_back(testInOut);
+	evalNet.predict(testGroup);
+	double predict = testGroup[0].out[0];
+	double trueEval = rangeVal(getEval(1 - pos.sdPlayer));
+	cout << "predict " << predict << endl << "true eval " << trueEval << endl << "delta " << fabs(trueEval - predict)<<endl;
+
+
+}
+void Train::importNet() {
+	evalNet.importNet("tempNet.txt");
+}
+void showInfo() {
+	int redEval = getEval(1);//红色
+	int blackEval = getEval(0);//黑色
+	printf("red eval  %d black eval %d red guiyi eval %lf black guiyi eval %lf \n", redEval, blackEval, rangeVal(redEval),rangeVal(blackEval));
+}
+bool isContinue = true;
+
 // 入口过程
 int main() {
-	srand((DWORD)time(NULL));
-	InitZobrist();
-	LoadBook();
-	Xqwl.bFlipped = FALSE;
-	Startup();
-	//测试走一步棋并
-	while (Xqwl.bGameOver != TRUE) {
-		moveRand();
+	train.isEval = false;
+	if (!train.isEval) {
+		while (1) {
+			stepCount = 0;
+			srand((DWORD)time(NULL));
+			InitZobrist();
+			LoadBook();
+			Xqwl.bFlipped = FALSE;
+			Startup();
+
+			train.initTrainBp();
+			//测试走一步棋并
+			while (Xqwl.bGameOver != TRUE) {
+				if (stepCount > 200) {
+					//printf("步数超过200\n");
+					break;
+				}
+				moveRand();
+				//trainBp();
+			}
+			//cout << stepCount << endl;
+			train.trainingBp(isContinue);
+		}
 	}
+	else {
+		stepCount = 0;
+		srand((DWORD)time(NULL));
+		InitZobrist();
+		LoadBook();
+		Xqwl.bFlipped = FALSE;
+		Startup();
+
+		train.initTrainBp();
+		train.importNet();
+		//测试走一步棋并
+		while (Xqwl.bGameOver != TRUE) {
+			if (stepCount > 200) {
+				//printf("步数超过200\n");
+				break;
+			}
+			moveRand();
+			//trainBp();
+		}
+		cout << stepCount << endl;
+	}
+		
+	
+	
+	printf("max %d min %d\n", vvmax, vvmin);
 	printf("ok\n");
 	getchar();
 }
